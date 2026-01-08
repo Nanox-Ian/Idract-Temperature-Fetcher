@@ -8,8 +8,8 @@
 $CONFIG = [
     'idrac_url'        => 'https://10.129.16.81',
     'idrac_user'       => 'root',
-    'idrac_pass'       => 'P@ssw0rd3128!',      // <-- move to env later for safety
-    'email_from'       => 'nxpisian@gmail.com', // If using company SMTP, use a company address here
+    'idrac_pass'       => 'Pass',      // <-- move to env later for safety
+    'email_from'       => 'nxpisian@gmail.com', // 
     'email_from_name'  => 'iDRAC Monitor',      // Friendly display name
     'email_to'         => 'supercompnxp@gmail.com, ian.tolentino.bp@j-display.com',
 
