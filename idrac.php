@@ -1,32 +1,7 @@
-
 <?php
 // iDRAC Temperature Monitor - Standalone Version
-// No external dependencies needed
-
-// =============== CONFIGURATION ===============
-
-$CONFIG = [
-    'idrac_url'        => 'https://10.129.16.81',
-    'idrac_user'       => 'root',
-    'idrac_pass'       => 'Pass',      // <-- move to env later for safety
-    'email_from'       => 'nxpisian@gmail.com', // 
-    'email_from_name'  => 'iDRAC Monitor',      // Friendly display name
-    'email_to'         => 'supercompnxp@gmail.com, ian.tolentino.bp@j-display.com',
-
-    'warning_temp'     => 25,
-    'critical_temp'    => 30,
-    'check_interval'   => 60, // minutes for UI auto-refresh
-    'timezone'         => 'Singapore',
-
-    // ==== Email transport ====
-    'transport'        => 'smtp',          // 'smtp' or 'mail'
-    'smtp_host'        => 'smtp.gmail.com',// or your company SMTP host
-    'smtp_port'        => 587,             // 587 (STARTTLS) or 465 (SSL)
-    'smtp_secure'      => 'tls',           // 'tls' or 'ssl' or '' (none)
-    'smtp_user'        => 'nxpisian@gmail.com',
-    'smtp_pass'        => 'YOUR_APP_PASSWORD_HERE', // Gmail: use App Password
-    'smtp_timeout'     => 20               // seconds
-];
+// Include configuration
+require_once __DIR__ . '/idrac_config.php';
 
 date_default_timezone_set($CONFIG['timezone']);
 
@@ -108,11 +83,135 @@ function get_temp_status($temp): string {
     return 'NORMAL';
 }
 
+// =============== ENHANCED EMAIL FUNCTIONS ===============
+function send_email(string $subject, string $message): bool {
+    global $CONFIG;
+    
+    $to = $CONFIG['email_to'];
+    $from = $CONFIG['email_from'];
+    $from_name = $CONFIG['email_from_name'];
+    
+    // Use company internal relay (port 25, no auth)
+    if ($CONFIG['transport'] === 'smtp' && $CONFIG['smtp_host'] === 'mrelay.intra.j-display.com') {
+        return send_email_internal_relay($subject, $message, $to, $from, $from_name);
+    }
+    
+    // Fallback to standard mail() function
+    return send_email_simple($subject, $message, $to, $from, $from_name);
+}
+
+function send_email_internal_relay(string $subject, string $message, string $to, string $from, string $from_name): bool {
+    global $CONFIG;
+    
+    // Prepare headers
+    $headers = [];
+    $headers[] = "From: {$from_name} <{$from}>";
+    $headers[] = "Reply-To: {$from}";
+    $headers[] = "Return-Path: {$from}";
+    $headers[] = "MIME-Version: 1.0";
+    $headers[] = "Content-Type: text/plain; charset=UTF-8";
+    $headers[] = "Content-Transfer-Encoding: 8bit";
+    $headers[] = "X-Mailer: iDRAC-Monitor/1.0";
+    $headers[] = "X-Priority: 3";
+    
+    $headers_str = implode("\r\n", $headers);
+    
+    // Log email attempt
+    error_log("Attempting to send email via internal relay to: {$to}");
+    
+    // Use PHP's mail() function - it should use your server's MTA which is configured to use mrelay
+    $result = @mail($to, $subject, $message, $headers_str);
+    
+    if ($result) {
+        error_log("Email sent successfully to: {$to}");
+    } else {
+        error_log("Failed to send email to: {$to}");
+        // Try alternative method
+        $result = send_email_alternative($subject, $message, $to, $from, $from_name);
+    }
+    
+    return $result;
+}
+
+function send_email_alternative(string $subject, string $message, string $to, string $from, string $from_name): bool {
+    // Alternative: use fsockopen to directly connect to SMTP
+    global $CONFIG;
+    
+    $smtp_host = $CONFIG['smtp_host'];
+    $smtp_port = $CONFIG['smtp_port'];
+    
+    try {
+        $socket = @fsockopen($smtp_host, $smtp_port, $errno, $errstr, 10);
+        
+        if (!$socket) {
+            error_log("SMTP Connection failed to {$smtp_host}:{$smtp_port} - {$errstr} ({$errno})");
+            return false;
+        }
+        
+        // Read welcome message
+        $response = fgets($socket, 515);
+        
+        // Send HELO/EHLO
+        fputs($socket, "HELO " . $_SERVER['SERVER_NAME'] . "\r\n");
+        $response = fgets($socket, 515);
+        
+        // Set MAIL FROM
+        fputs($socket, "MAIL FROM: <{$from}>\r\n");
+        $response = fgets($socket, 515);
+        
+        // Set RCPT TO
+        $recipients = explode(',', $to);
+        foreach ($recipients as $recipient) {
+            $recipient = trim($recipient);
+            if (filter_var($recipient, FILTER_VALIDATE_EMAIL)) {
+                fputs($socket, "RCPT TO: <{$recipient}>\r\n");
+                $response = fgets($socket, 515);
+            }
+        }
+        
+        // Send DATA
+        fputs($socket, "DATA\r\n");
+        $response = fgets($socket, 515);
+        
+        // Send email headers and body
+        $email_data = "From: {$from_name} <{$from}>\r\n";
+        $email_data .= "To: {$to}\r\n";
+        $email_data .= "Subject: {$subject}\r\n";
+        $email_data .= "MIME-Version: 1.0\r\n";
+        $email_data .= "Content-Type: text/plain; charset=UTF-8\r\n";
+        $email_data .= "\r\n";
+        $email_data .= $message . "\r\n";
+        $email_data .= ".\r\n";
+        
+        fputs($socket, $email_data);
+        $response = fgets($socket, 515);
+        
+        // Quit
+        fputs($socket, "QUIT\r\n");
+        fclose($socket);
+        
+        return true;
+    } catch (Exception $e) {
+        error_log("SMTP Error: " . $e->getMessage());
+        return false;
+    }
+}
+
+function send_email_simple(string $subject, string $message, string $to, string $from, string $from_name): bool {
+    $headers = [];
+    $headers[] = "From: {$from_name} <{$from}>";
+    $headers[] = "Reply-To: {$from}";
+    $headers[] = "MIME-Version: 1.0";
+    $headers[] = "Content-Type: text/plain; charset=UTF-8";
+    $headers_str = implode("\r\n", $headers);
+    
+    return @mail($to, $subject, $message, $headers_str);
+}
+
 // =============== PROFESSIONAL EMAIL ===============
 function build_email_subject(string $kind, string $status, float $temp): string {
     global $CONFIG;
     $host = parse_url($CONFIG['idrac_url'], PHP_URL_HOST);
-    // $kind = 'Report' or 'Alert'
     return sprintf('[iDRAC %s] %s — %.1f°C — %s', $kind, $status, $temp, $host);
 }
 
@@ -125,9 +224,9 @@ function build_email_body(array $payload): string {
         'Host: ' . $host,
         'Status: ' . ($payload['status'] ?? 'UNKNOWN'),
         'Temperature: ' . sprintf('%.1f°C', $payload['temperature'] ?? 0),
-        sprintf('Thresholds: Warning ≥ %d°C | Critical ≥ %d°C', $CONFIG['warning_temp'], $CONFIG['critical_temp']),
+        // sprintf('Thresholds: Warning ≥ %d°C | Critical ≥ %d°C', $CONFIG['warning_temp'], $CONFIG['critical_temp']),
         'Time: ' . ($payload['timestamp'] ?? format_ts()),
-        'Redfish: ' . $CONFIG['idrac_url']
+        // 'Redfish: ' . $CONFIG['idrac_url']
     ];
 
     // For alerts, optionally include a one-line recommendation
@@ -140,21 +239,6 @@ function build_email_body(array $payload): string {
     }
 
     return implode("\n", $lines);
-}
-
-function send_email(string $subject, string $message): bool {
-    global $CONFIG;
-    $to   = $CONFIG['email_to'];
-    $from = $CONFIG['email_from'];
-
-    $headers = [];
-    $headers[] = "From: {$from}";
-    $headers[] = "Reply-To: {$from}";
-    $headers[] = "MIME-Version: 1.0";
-    $headers[] = "Content-Type: text/plain; charset=UTF-8";
-    $headers_str = implode("\r\n", $headers);
-
-    return @mail($to, $subject, $message, $headers_str);
 }
 
 // =============== ALERT LOGIC (on threshold) ===============
@@ -217,6 +301,45 @@ function get_history(): array {
     return [];
 }
 
+function send_hourly_check(): void {
+    $result = get_iDRAC_temperature();
+
+    if ($result['success'] ?? false) {
+        // Persist the reading
+        save_to_history($result['temperature'], $result['status']);
+
+        // Trigger alert emails on state transitions (WARNING/CRITICAL)
+        check_and_alert($result['temperature'], $result['status'], $result['timestamp']);
+
+        // Send an hourly report email regardless of status (optional)
+        $subject = build_email_subject('Hourly Report', $result['status'], $result['temperature']);
+        $message = build_email_body([
+            'kind'        => 'Report',
+            'status'      => $result['status'],
+            'temperature' => $result['temperature'],
+            'timestamp'   => $result['timestamp']
+        ]);
+
+        if (!send_email($subject, $message)) {
+            error_log('Hourly report: failed to send report email');
+        } else {
+            error_log('Hourly report: email sent');
+        }
+    } else {
+        error_log('Hourly check: failed to get temperature - ' . ($result['message'] ?? 'unknown'));
+    }
+}
+
+// Allow running the hourly check from CLI: `php idrac.php hourly`
+if (php_sapi_name() === 'cli') {
+    global $argv;
+    if (!empty($argv) && (in_array('hourly', $argv, true) || in_array('--hourly', $argv, true))) {
+        send_hourly_check();
+        // Exit so the rest of the web-oriented script doesn't run in CLI mode
+        exit(0);
+    }
+}
+
 // =============== API ENDPOINTS ===============
 if (isset($_GET['action'])) {
     header('Content-Type: application/json');
@@ -251,9 +374,19 @@ if (isset($_GET['action'])) {
 
         case 'test_email':
             $subject = '[iDRAC Test] Email Connectivity';
-            $message = "This is a test email from iDRAC Monitor.\nTime: " . format_ts() . "\nRedfish: " . $CONFIG['idrac_url'];
+            $message = "This is a test email from iDRAC Monitor.\n";
+            $message .= "Time: " . format_ts() . "\n";
+            $message .= "iDRAC: " . $CONFIG['idrac_url'] . "\n";
+            $message .= "SMTP Server: " . $CONFIG['smtp_host'] . ":" . $CONFIG['smtp_port'] . "\n";
+            $message .= "From: " . $CONFIG['email_from'] . "\n";
+            $message .= "To: " . $CONFIG['email_to'] . "\n\n";
+            $message .= "If you receive this, email configuration is working correctly!";
+            
             $sent = send_email($subject, $message);
-            echo json_encode(['success' => $sent, 'message' => $sent ? 'Test email sent' : 'Failed to send test email']);
+            echo json_encode([
+                'success' => $sent, 
+                'message' => $sent ? 'Test email sent to ' . $CONFIG['email_to'] : 'Failed to send test email'
+            ]);
             break;
 
         case 'get_history':
@@ -303,6 +436,7 @@ if (isset($_GET['action'])) {
         th, td { padding: 10px; text-align: left; border-bottom: 1px solid #ddd; }
         th { background: #f8f9fa; }
         .meta { color: #666; font-size: 14px; margin-top: 8px; }
+        .config-info { background: #f8f9fa; padding: 15px; border-radius: 5px; margin: 10px 0; font-family: monospace; font-size: 12px; }
         @media (max-width: 768px) { .controls { grid-template-columns: 1fr; } }
     </style>
 </head>
@@ -312,6 +446,14 @@ if (isset($_GET['action'])) {
     </div>
 
     <div class="content">
+        <div class="config-info">
+            <strong>Current Email Configuration:</strong><br>
+            SMTP Server: <?php echo htmlspecialchars($CONFIG['smtp_host']); ?>:<?php echo htmlspecialchars($CONFIG['smtp_port']); ?><br>
+            From: <?php echo htmlspecialchars($CONFIG['email_from']); ?><br>
+            To: <?php echo htmlspecialchars($CONFIG['email_to']); ?><br>
+            Auth: <?php echo $CONFIG['smtp_auth'] ? 'Enabled' : 'Disabled (internal relay)'; ?>
+        </div>
+
         <div style="display: grid; grid-template-columns: 2fr 1fr 1fr; gap: 20px; margin-bottom: 30px;">
             <div style="background: #f8f9fa; padding: 20px; border-radius: 10px; border-left: 5px solid #3498db; text-align: center;">
                 <h2>Current Temperature</h2>
@@ -329,10 +471,10 @@ if (isset($_GET['action'])) {
             </div>
 
             <div style="background: #f8f9fa; padding: 20px; border-radius: 10px; border-left: 5px solid #27ae60;">
-                <h3>System Info</h3>
-                <p><strong>iDRAC:</strong> <?php echo parse_url($CONFIG['idrac_url'], PHP_URL_HOST); ?></p>
-                <p><strong>Email:</strong> <?php echo $CONFIG['email_to']; ?></p>
-                <p><strong>Auto-refresh:</strong> every <?php echo $CONFIG['check_interval']; ?> min</p>
+                <h3>Email Test</h3>
+                <p><strong>Recipient:</strong><br><?php echo $CONFIG['email_to']; ?></p>
+                <p><strong>SMTP:</strong><br><?php echo $CONFIG['smtp_host']; ?>:<?php echo $CONFIG['smtp_port']; ?></p>
+                <p><strong>Click "Test Email" to verify</strong></p>
             </div>
         </div>
 
@@ -341,9 +483,6 @@ if (isset($_GET['action'])) {
             <button class="btn-success" onclick="sendReport()">Send Report</button>
             <button class="btn-warning" onclick="sendTestEmail()">Test Email</button>
             <button class="btn-info"    onclick="loadHistory()">Load History</button>
-            <!-- New hourly controls -->
-            <button class="btn-info"    onclick="startHourly()">Start Hourly Emails</button>
-            <button class="btn-danger"  onclick="stopHourly()">Stop Hourly Emails</button>
         </div>
 
         <div class="loading" id="loading"><p>Loading...</p></div>
@@ -363,10 +502,7 @@ if (isset($_GET['action'])) {
     </div>
 
     <script>
-        const AUTO_REFRESH_MS = <?php echo (int)$CONFIG['check_interval']; ?> * 60000; // minutes -> ms
-        const HOURLY_MS = 60 * 60000; // fixed hourly interval
-
-        let hourlyTimer = null;
+        const AUTO_REFRESH_MS = <?php echo (int)$CONFIG['check_interval']; ?> * 60000;
 
         async function getTemperature() {
             showLoading(true);
@@ -391,7 +527,7 @@ if (isset($_GET['action'])) {
         }
 
         async function sendReport() {
-            showLoading(true, 'Sending report...');
+            showLoading(true);
             try {
                 const response = await fetch('?action=send_report');
                 const data = await response.json();
@@ -403,7 +539,7 @@ if (isset($_GET['action'])) {
         }
 
         async function sendTestEmail() {
-            showLoading(true, 'Sending test email...');
+            showLoading(true);
             try {
                 const response = await fetch('?action=test_email');
                 const data = await response.json();
@@ -415,7 +551,7 @@ if (isset($_GET['action'])) {
         }
 
         async function loadHistory() {
-            showLoading(true, 'Loading history...');
+            showLoading(true);
             try {
                 const response = await fetch('?action=get_history');
                 const data = await response.json();
@@ -436,29 +572,6 @@ if (isset($_GET['action'])) {
             showLoading(false);
         }
 
-        function startHourly() {
-            if (hourlyTimer) {
-                showNotification('Hourly emails already running.', 'success');
-                return;
-            }
-            hourlyTimer = setInterval(sendReport, HOURLY_MS);
-            // Send one immediately to start the cadence
-            sendReport();
-            document.getElementById('hourlyStatus').innerHTML = 'Hourly emails: <strong>Running</strong>';
-            showNotification('Hourly emails started (reports will send every 60 minutes while this page stays open).', 'success');
-        }
-
-        function stopHourly() {
-            if (hourlyTimer) {
-                clearInterval(hourlyTimer);
-                hourlyTimer = null;
-                document.getElementById('hourlyStatus').innerHTML = 'Hourly emails: <strong>Stopped</strong>';
-                showNotification('Hourly emails stopped.', 'success');
-            } else {
-                showNotification('Hourly emails are not running.', 'error');
-            }
-        }
-
         function showNotification(message, type) {
             const el = document.getElementById('notification');
             el.textContent = message;
@@ -467,7 +580,7 @@ if (isset($_GET['action'])) {
             setTimeout(() => el.style.display = 'none', 5000);
         }
 
-        function showLoading(show, text = 'Loading...') {
+        function showLoading(show) {
             const el = document.getElementById('loading');
             el.style.display = show ? 'block' : 'none';
         }
