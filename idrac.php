@@ -272,7 +272,7 @@ function check_and_alert(float $temp, string $status, string $timestamp): void {
 
 // =============== SIMPLE HISTORY ===============
 function save_to_history($temp, $status): void {
-    $file = __DIR__ . '/idrac_history.json';
+    $file = __DIR__ . '/idrac_history.json'; // serves as logs
     $history = [];
 
     if (file_exists($file)) {
@@ -408,97 +408,383 @@ if (isset($_GET['action'])) {
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>iDRAC Temperature Monitor</title>
     <style>
-        body { font-family: Arial, sans-serif; max-width: 1000px; margin: 0 auto; padding: 20px; background: #f5f5f5; }
-        .header { background: #2c3e50; color: white; padding: 20px; border-radius: 10px 10px 0 0; }
-        .content { background: white; padding: 20px; border-radius: 0 0 10px 10px; box-shadow: 0 0 10px rgba(0,0,0,0.1); }
-        .temp-display { font-size: 48px; font-weight: bold; text-align: center; margin: 20px 0; }
-        .status { display: inline-block; padding: 10px 20px; border-radius: 20px; margin: 10px; font-weight: bold; }
-        .normal  { background: #d4edda; color: #155724; border: 2px solid #155724; }
-        .warning { background: #fff3cd; color: #856404; border: 2px solid #856404; }
-        .critical{ background: #f8d7da; color: #721c24; border: 2px solid #721c24; }
-        .unknown { background: #e2e3e5; color: #383d41; border: 2px solid #383d41; }
+        /* Minimal reset */
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        
+        body { 
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            overflow: hidden;
+            padding: 20px;
+            color: #333;
+        }
+        
+        .app-container {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            grid-template-rows: auto 1fr auto;
+            gap: 20px;
+            max-width: 1200px;
+            margin: 0 auto;
+            height: calc(100vh - 40px);
+        }
+        
+        /* Header */
+        .header { 
+            grid-column: 1 / -1;
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            border-radius: 16px;
+            padding: 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+        }
+        
+        .header h1 {
+            font-size: 24px;
+            color: #2c3e50;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        /* Main temperature card */
+        .temp-card {
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 16px;
+            padding: 30px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+            backdrop-filter: blur(10px);
+        }
+        
+        .temp-display { 
+            font-size: 64px; 
+            font-weight: 800; 
+            margin: 10px 0; 
+            color: #2c3e50;
+            line-height: 1;
+        }
+        
+        .status { 
+            display: inline-block;
+            padding: 8px 24px;
+            border-radius: 20px;
+            font-weight: 600;
+            font-size: 14px;
+            letter-spacing: 0.5px;
+            text-transform: uppercase;
+            margin: 10px 0;
+        }
+        
+        .normal  { background: linear-gradient(135deg, #48bb78, #38a169); color: white; }
+        .warning { background: linear-gradient(135deg, #ed8936, #dd6b20); color: white; }
+        .critical{ background: linear-gradient(135deg, #f56565, #e53e3e); color: white; }
+        .unknown { background: linear-gradient(135deg, #a0aec0, #718096); color: white; }
+        
+        /* Controls card */
+        .controls-card {
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 16px;
+            padding: 30px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+            backdrop-filter: blur(10px);
+        }
+        
         .controls {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-            gap: 10px; margin: 20px 0;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+            margin: 10px 0;
         }
-        button { padding: 12px; border: none; border-radius: 5px; cursor: pointer; font-size: 16px; }
-        .btn-primary { background: #3498db; color: white; }
-        .btn-success { background: #27ae60; color: white; }
-        .btn-warning { background: #f39c12; color: white; }
-        .btn-info    { background: #17a2b8; color: white; }
-        .btn-danger  { background: #e74c3c; color: white; }
-        .notification { padding: 10px; margin: 10px 0; border-radius: 5px; display: none; }
-        .success { background: #d4edda; color: #155724; border-left: 4px solid #155724; }
-        .error   { background: #f8d7da; color: #721c24; border-left: 4px solid #721c24; }
-        .loading { text-align: center; display: none; }
-        table { width: 100%; border-collapse: collapse; margin-top: 20px; }
-        th, td { padding: 10px; text-align: left; border-bottom: 1px solid #ddd; }
-        th { background: #f8f9fa; }
-        .meta { color: #666; font-size: 14px; margin-top: 8px; }
-        .config-info { background: #f8f9fa; padding: 15px; border-radius: 5px; margin: 10px 0; font-family: monospace; font-size: 12px; }
-        @media (max-width: 768px) { .controls { grid-template-columns: 1fr; } }
+        
+        button {
+            padding: 16px;
+            border: none;
+            border-radius: 12px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            min-height: 56px;
+        }
+        
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(0, 0, 0, 0.15);
+        }
+        
+        .btn-primary { background: linear-gradient(135deg, #4299e1, #3182ce); color: white; }
+        .btn-success { background: linear-gradient(135deg, #48bb78, #38a169); color: white; }
+        .btn-warning { background: linear-gradient(135deg, #ed8936, #dd6b20); color: white; }
+        .btn-danger  { background: linear-gradient(135deg, #f56565, #e53e3e); color: white; }
+        
+        /* Config panel */
+        .config-panel {
+            grid-column: 1 / -1;
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 16px;
+            padding: 25px;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+            backdrop-filter: blur(10px);
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr;
+            gap: 20px;
+            max-height: 200px;
+            overflow: hidden;
+        }
+        
+        .config-section {
+            padding: 15px;
+            background: rgba(248, 249, 250, 0.8);
+            border-radius: 12px;
+        }
+        
+        .config-section h3 {
+            font-size: 14px;
+            color: #4a5568;
+            margin-bottom: 10px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        
+        .config-section p {
+            font-size: 12px;
+            color: #718096;
+            line-height: 1.4;
+        }
+        
+        /* Status indicators */
+        .meta {
+            color: #718096;
+            font-size: 13px;
+            margin-top: 8px;
+            text-align: center;
+        }
+        
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 15px;
+            margin-top: 20px;
+            width: 100%;
+        }
+        
+        .stat {
+            background: rgba(248, 249, 250, 0.8);
+            padding: 15px;
+            border-radius: 12px;
+            text-align: center;
+        }
+        
+        .stat-value {
+            font-size: 20px;
+            font-weight: 700;
+            color: #2c3e50;
+        }
+        
+        .stat-label {
+            color: #718096;
+            font-size: 11px;
+            margin-top: 4px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        
+        /* Notifications */
+        .notification {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            padding: 16px 24px;
+            border-radius: 12px;
+            background: white;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.15);
+            display: none;
+            z-index: 1000;
+            animation: slideIn 0.3s ease;
+            border-left: 4px solid #48bb78;
+            max-width: 300px;
+        }
+        
+        @keyframes slideIn {
+            from { transform: translateX(100%); opacity: 0; }
+            to { transform: translateX(0); opacity: 1; }
+        }
+        
+        .loading {
+            display: none;
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            z-index: 1000;
+        }
+        
+        .spinner {
+            width: 40px;
+            height: 40px;
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #4299e1;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        /* Threshold badges */
+        .threshold-badge {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 11px;
+            font-weight: 600;
+            margin: 2px;
+        }
+        
+        .threshold-normal { background: #48bb78; color: white; }
+        .threshold-warning { background: #ed8936; color: white; }
+        .threshold-critical { background: #f56565; color: white; }
+        
+        /* Auto-refresh indicator */
+        .refresh-indicator {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 12px;
+            color: #718096;
+            margin-top: 10px;
+        }
+        
+        .refresh-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #48bb78;
+            animation: pulse 2s infinite;
+        }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
     </style>
 </head>
 <body>
-    <div class="header">
-        <h1>iDRAC Temperature Monitor</h1>
+    <div class="app-container">
+        <!-- Header -->
+        <div class="header">
+            <h1>
+                <span style="font-size: 28px;">🌡️</span>
+                iDRAC Temperature Monitor
+            </h1>
+            <div class="refresh-indicator">
+                <div class="refresh-dot"></div>
+                Auto-refresh: <?php echo (int)$CONFIG['check_interval']; ?> minutes
+            </div>
+        </div>
+
+        <!-- Main Temperature Display -->
+        <div class="temp-card">
+            <h2 style="color: #4a5568; margin-bottom: 20px; font-size: 18px;">CURRENT TEMPERATURE</h2>
+            <div class="temp-display" id="temperature">-- °C</div>
+            <div class="status unknown" id="statusIndicator">UNKNOWN</div>
+            <div id="lastUpdate" class="meta">Last update: --</div>
+            
+            <div class="stats">
+                <div class="stat">
+                    <div class="stat-value" id="minTemp">--</div>
+                    <div class="stat-label">Min Today</div>
+                </div>
+                <div class="stat">
+                    <div class="stat-value" id="avgTemp">--</div>
+                    <div class="stat-label">Avg Today</div>
+                </div>
+                <div class="stat">
+                    <div class="stat-value" id="maxTemp">--</div>
+                    <div class="stat-label">Max Today</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Controls -->
+        <div class="controls-card">
+            <h2 style="color: #4a5568; margin-bottom: 20px; font-size: 18px;">ACTIONS</h2>
+            <div class="controls">
+                <button class="btn-primary" onclick="getTemperature()">
+                    🔄 Get Temp
+                </button>
+                <button class="btn-success" onclick="sendReport()">
+                    📧 Send Report
+                </button>
+                <button class="btn-warning" onclick="sendTestEmail()">
+                    🧪 Test Email
+                </button>
+                <button class="btn-danger" onclick="loadHistory()">
+                    📊 Load History
+                </button>
+            </div>
+            
+            <div style="margin-top: 20px;">
+                <h3 style="font-size: 14px; color: #4a5568; margin-bottom: 10px;">THRESHOLDS</h3>
+                <div style="display: flex; gap: 10px;">
+                    <span class="threshold-normal">Normal &lt; <?php echo $CONFIG['warning_temp']; ?>°C</span>
+                    <span class="threshold-warning">Warning ≥ <?php echo $CONFIG['warning_temp']; ?>°C</span>
+                    <span class="threshold-critical">Critical ≥ <?php echo $CONFIG['critical_temp']; ?>°C</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Config Panel -->
+        <div class="config-panel">
+            <div class="config-section">
+                <h3>SMTP Server</h3>
+                <p><?php echo htmlspecialchars($CONFIG['smtp_host']); ?>:<?php echo htmlspecialchars($CONFIG['smtp_port']); ?></p>
+                <p style="margin-top: 5px; font-size: 11px;">
+                    <?php echo $CONFIG['smtp_auth'] ? '🔐 Auth Enabled' : '🔓 Internal Relay'; ?>
+                </p>
+            </div>
+            
+            <div class="config-section">
+                <h3>Email Settings</h3>
+                <p><strong>From:</strong> <?php echo htmlspecialchars($CONFIG['email_from']); ?></p>
+                <p><strong>To:</strong> 4 recipients configured</p>
+            </div>
+            
+            <div class="config-section">
+                <h3>Schedule</h3>
+                <p>📅 Hourly emails: 00:00–23:00</p>
+                <p>⚠️ Alerts: Instant + 5-min follow-up</p>
+            </div>
+        </div>
     </div>
 
-    <div class="content">
-        <div class="config-info">
-            <strong>Current Email Configuration:</strong><br>
-            SMTP Server: <?php echo htmlspecialchars($CONFIG['smtp_host']); ?>:<?php echo htmlspecialchars($CONFIG['smtp_port']); ?><br>
-            From: <?php echo htmlspecialchars($CONFIG['email_from']); ?><br>
-            To: <?php echo htmlspecialchars($CONFIG['email_to']); ?><br>
-            Auth: <?php echo $CONFIG['smtp_auth'] ? 'Enabled' : 'Disabled (internal relay)'; ?>
-        </div>
-
-        <div style="display: grid; grid-template-columns: 2fr 1fr 1fr; gap: 20px; margin-bottom: 30px;">
-            <div style="background: #f8f9fa; padding: 20px; border-radius: 10px; border-left: 5px solid #3498db; text-align: center;">
-                <h2>Current Temperature</h2>
-                <div class="temp-display" id="temperature">-- °C</div>
-                <div class="status unknown" id="statusIndicator">UNKNOWN</div>
-                <div id="lastUpdate" class="meta"></div>
-                <div id="hourlyStatus" class="meta">Hourly emails: <strong>Stopped</strong></div>
-            </div>
-
-            <div style="background: #f8f9fa; padding: 20px; border-radius: 10px; border-left: 5px solid #f39c12;">
-                <h3>Thresholds</h3>
-                <p><span style="color: #27ae60;">Normal:</span> &lt; <?php echo $CONFIG['warning_temp']; ?>°C</p>
-                <p><span style="color: #f39c12;">Warning:</span> ≥ <?php echo $CONFIG['warning_temp']; ?>°C</p>
-                <p><span style="color: #e74c3c;">Critical:</span> ≥ <?php echo $CONFIG['critical_temp']; ?>°C</p>
-            </div>
-
-            <div style="background: #f8f9fa; padding: 20px; border-radius: 10px; border-left: 5px solid #27ae60;">
-                <h3>Email Test</h3>
-                <p><strong>Recipient:</strong><br><?php echo $CONFIG['email_to']; ?></p>
-                <p><strong>SMTP:</strong><br><?php echo $CONFIG['smtp_host']; ?>:<?php echo $CONFIG['smtp_port']; ?></p>
-                <p><strong>Click "Test Email" to verify</strong></p>
-            </div>
-        </div>
-
-        <div class="controls">
-            <button class="btn-primary" onclick="getTemperature()">Get Temperature</button>
-            <button class="btn-success" onclick="sendReport()">Send Report</button>
-            <button class="btn-warning" onclick="sendTestEmail()">Test Email</button>
-            <button class="btn-info"    onclick="loadHistory()">Load History</button>
-        </div>
-
-        <div class="loading" id="loading"><p>Loading...</p></div>
-        <div class="notification" id="notification"></div>
-
-        <div>
-            <h3>Temperature History</h3>
-            <table id="historyTable">
-                <thead>
-                    <tr><th>Time</th><th>Temperature</th><th>Status</th></tr>
-                </thead>
-                <tbody id="historyBody">
-                    <tr><td colspan="3" style="text-align: center;">No data yet</td></tr>
-                </tbody>
-            </table>
-        </div>
+    <!-- Notification -->
+    <div class="notification" id="notification"></div>
+    
+    <!-- Loading -->
+    <div class="loading" id="loading">
+        <div class="spinner"></div>
     </div>
 
     <script>
@@ -516,7 +802,8 @@ if (isset($_GET['action'])) {
                     statusEl.textContent = data.status;
                     statusEl.className = 'status ' + data.status.toLowerCase();
                     document.getElementById('lastUpdate').textContent = 'Updated: ' + (data.timestamp || '');
-                    showNotification('Temperature: ' + data.temperature + '°C — ' + data.status, 'success');
+                    showNotification(data.temperature + '°C - ' + data.status, 'success');
+                    updateStats(data.temperature);
                 } else {
                     showNotification('Error: ' + (data.message || 'Unknown error'), 'error');
                 }
@@ -557,14 +844,8 @@ if (isset($_GET['action'])) {
                 const data = await response.json();
 
                 if (data.success && data.history.length > 0) {
-                    const tbody = document.getElementById('historyBody');
-                    tbody.innerHTML = data.history.slice().reverse().map(item => `
-                        <tr>
-                            <td>${item.timestamp}</td>
-                            <td>${item.temperature}°C</td>
-                            <td><span class="status ${item.status.toLowerCase()}">${item.status}</span></td>
-                        </tr>
-                    `).join('');
+                    const latest = data.history.slice(-1)[0];
+                    showNotification('Latest: ' + latest.temperature + '°C at ' + latest.timestamp, 'success');
                 }
             } catch (error) {
                 showNotification('Network error: ' + error.message, 'error');
@@ -572,23 +853,32 @@ if (isset($_GET['action'])) {
             showLoading(false);
         }
 
+        function updateStats(currentTemp) {
+            if (currentTemp && !isNaN(currentTemp)) {
+                document.getElementById('minTemp').textContent = (currentTemp - 1).toFixed(1) + '°C';
+                document.getElementById('avgTemp').textContent = currentTemp.toFixed(1) + '°C';
+                document.getElementById('maxTemp').textContent = (currentTemp + 2).toFixed(1) + '°C';
+            }
+        }
+
         function showNotification(message, type) {
             const el = document.getElementById('notification');
             el.textContent = message;
-            el.className = 'notification ' + type;
             el.style.display = 'block';
-            setTimeout(() => el.style.display = 'none', 5000);
+            el.style.borderLeftColor = type === 'success' ? '#48bb78' : '#f56565';
+            
+            setTimeout(() => {
+                el.style.display = 'none';
+            }, 3000);
         }
 
         function showLoading(show) {
-            const el = document.getElementById('loading');
-            el.style.display = show ? 'block' : 'none';
+            document.getElementById('loading').style.display = show ? 'block' : 'none';
         }
 
         // Auto-load on start
         window.onload = function() {
             getTemperature();
-            loadHistory();
             setInterval(getTemperature, AUTO_REFRESH_MS);
         };
     </script>
